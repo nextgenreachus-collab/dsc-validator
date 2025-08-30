@@ -1,9 +1,10 @@
 import os
 from flask import Flask, render_template, request, redirect, url_for, flash
 from werkzeug.utils import secure_filename
-from pypdf import PdfReader
+from pyhanko.sign import validation
+from pyhanko.pdf_utils.reader import PdfFileReader
 
-# Tell Flask to look for index.html in the same folder
+# Flask setup
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret")
 
@@ -14,44 +15,27 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 def validate_dsc(filepath):
-    """Try to detect DSC in the PDF and extract signer names if possible."""
+    """Validate DSC signatures using pyHanko."""
     try:
-        reader = PdfReader(filepath)
-        names = []
+        with open(filepath, "rb") as f:
+            r = PdfFileReader(f)
 
-        # --- Method 1: Look in AcroForm fields ---
-        try:
-            root = reader.trailer["/Root"]
-            if "/AcroForm" in root:
-                acroform = root["/AcroForm"]
-                if "/Fields" in acroform:
-                    fields = acroform["/Fields"]
-                    for f in fields:
-                        fobj = f.get_object()
-                        if "/V" in fobj:
-                            v = fobj["/V"].get_object()
-                            if "/Name" in v:
-                                names.append(str(v["/Name"]))
-                            elif "/M" in v:
-                                names.append(str(v["/M"]))
-        except Exception:
-            pass
+            if not r.embedded_signatures:
+                return {"status": "Invalid", "signers": []}
 
-        # --- Method 2: Scan all objects for /Sig ---
-        try:
-            for obj in reader.objects.values():
-                if isinstance(obj, dict) and "/Type" in obj and obj["/Type"] == "/Sig":
-                    if "/Name" in obj:
-                        names.append(str(obj["/Name"]))
-                    elif "/M" in obj:
-                        names.append(str(obj["/M"]))
-        except Exception:
-            pass
+            signers = []
+            for sig in r.embedded_signatures:
+                status = validation.validate_pdf_signature(sig, r)
 
-        if names:
-            return {"status": "Valid", "signers": list(set(names))}
-        else:
-            return {"status": "Invalid", "signers": []}
+                signer_name = "(Unknown)"
+                try:
+                    signer_name = sig.signer_cert.subject.human_friendly
+                except Exception:
+                    pass
+
+                signers.append(f"{signer_name} → {status.pretty_print_details()}")
+
+            return {"status": "Valid", "signers": signers}
 
     except Exception as e:
         return {"status": "Error", "error": str(e), "signers": []}
