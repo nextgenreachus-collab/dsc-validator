@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>PDF DSC Validator</title>
+  <style>
+    body { font-family: Arial, sans-serif; background:#f7f7f7; margin:0; padding:0; }
+    .wrap { max-width: 720px; margin: 60px auto; background:#fff; border-radius: 14px; padding: 28px 24px; box-shadow: 0 8px 30px rgba(0,0,0,.06); }
+    h1 { margin: 0 0 18px; font-size: 22px; }
+    form { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+    input[type=file] { padding: 10px; border:1px dashed #bbb; border-radius: 8px; background:#fafafa; }
+    button { padding: 10px 16px; border:0; border-radius: 8px; background:#2563eb; color:#fff; font-weight:600; cursor:pointer; }
+    button:hover { background:#1d4ed8; }
+    .flash { background:#fff3cd; color:#664d03; padding:10px 12px; border-radius:8px; margin: 12px 0; }
+    .card { margin-top:20px; padding:16px; border:1px solid #e5e7eb; border-radius:10px; background:#fafafa; }
+    .status { font-size: 18px; margin-bottom: 8px; }
+    .ok { color: #166534; }
+    .bad { color: #991b1b; }
+    ul { margin: 10px 0 0 18px; }
+    footer { margin-top: 28px; font-size: 12px; color:#6b7280; text-align:center; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>🔐 PDF DSC Validator</h1>
+    <form method="POST" enctype="multipart/form-data">
+      <input type="file" name="file" accept=".pdf" required />
+      <button type="submit">Check DSC</button>
+    </form>
+
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        {% for m in messages %}
+          <div class="flash">{{ m }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    {% if result %}
+      <div class="card">
+        {% if result.status == "Valid" %}
+          <div class="status ok">Status: ✅ Valid</div>
+          {% if result.signers and result.signers|length > 0 %}
+            <div>Signers found:</div>
+            <ul>
+              {% for s in result.signers %}
+                <li>{{ s }}</li>
+              {% endfor %}
+            </ul>
+          {% else %}
+            <div>(Signer name not found)</div>
+          {% endif %}
+        {% elif result.status == "Invalid" %}
+          <div class="status bad">Status: ❌ No Digital Signature Found</div>
+        {% else %}
+          <div class="status bad">Status: ❌ Error</div>
+          <div>{{ result.error }}</div>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    <footer>Uploads are not stored. File size limit ~25 MB.</footer>
+  </div>
+</body>
+</html>
