@@ -1,83 +1,61 @@
 import os
 from flask import Flask, render_template, request, redirect, url_for, flash
 from werkzeug.utils import secure_filename
-from PyPDF2 import PdfReader
+from pypdf import PdfReader
 
-# Tell Flask to look for templates in the current folder (.)
+# Tell Flask to look for index.html in the same folder
 app = Flask(__name__, template_folder=".")
-app.secret_key = os.environ.get("SECRET_KEY", "dev-secret")  # needed for flash messages
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret")
 
 # Limit uploads to ~25 MB
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
 UPLOAD_DIR = os.path.join(os.getcwd(), "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-def _extract_signatures_via_acroform(reader):
-    """Try to find signatures via AcroForm -> Fields and extract signer names."""
-    names = []
-    try:
-        root = reader.trailer.get("/Root")
-        if not root:
-            return names
-        acroform = root.get("/AcroForm")
-        if not acroform:
-            return names
-        fields = acroform.get("/Fields", [])
-        for f in fields:
-            try:
-                fobj = f.get_object()
-                v = fobj.get("/V")
-                if v:
-                    vobj = v.get_object()
-                    name = vobj.get("/Name")
-                    if name:
-                        names.append(str(name))
-                    else:
-                        m = vobj.get("/M")
-                        if m:
-                            names.append(str(m))
-            except Exception:
-                continue
-    except Exception:
-        pass
-    return names
-
-def _extract_signatures_by_scanning(reader):
-    """Fallback: scan resolved_objects for any dicts containing /Sig and try to pull names."""
-    names = []
-    try:
-        for obj in getattr(reader, "resolved_objects", {}).values():
-            try:
-                if isinstance(obj, dict) and "/Sig" in obj:
-                    sig = obj.get("/Sig")
-                    if isinstance(sig, dict):
-                        name = sig.get("/Name")
-                        if name:
-                            names.append(str(name))
-                        else:
-                            m = sig.get("/M")
-                            if m:
-                                names.append(str(m))
-            except Exception:
-                continue
-    except Exception:
-        pass
-    return names
 
 def validate_dsc(filepath):
-    """Return dict with status and list of signer names (if any)."""
+    """Try to detect DSC in the PDF and extract signer names if possible."""
     try:
         reader = PdfReader(filepath)
-        names = _extract_signatures_via_acroform(reader)
-        if not names:
-            names = _extract_signatures_by_scanning(reader)
+        names = []
+
+        # --- Method 1: Look in AcroForm fields ---
+        try:
+            root = reader.trailer["/Root"]
+            if "/AcroForm" in root:
+                acroform = root["/AcroForm"]
+                if "/Fields" in acroform:
+                    fields = acroform["/Fields"]
+                    for f in fields:
+                        fobj = f.get_object()
+                        if "/V" in fobj:
+                            v = fobj["/V"].get_object()
+                            if "/Name" in v:
+                                names.append(str(v["/Name"]))
+                            elif "/M" in v:
+                                names.append(str(v["/M"]))
+        except Exception:
+            pass
+
+        # --- Method 2: Scan all objects for /Sig ---
+        try:
+            for obj in reader.objects.values():
+                if isinstance(obj, dict) and "/Type" in obj and obj["/Type"] == "/Sig":
+                    if "/Name" in obj:
+                        names.append(str(obj["/Name"]))
+                    elif "/M" in obj:
+                        names.append(str(obj["/M"]))
+        except Exception:
+            pass
 
         if names:
-            return {"status": "Valid", "signers": names}
+            return {"status": "Valid", "signers": list(set(names))}
         else:
             return {"status": "Invalid", "signers": []}
+
     except Exception as e:
         return {"status": "Error", "error": str(e), "signers": []}
+
 
 @app.route("/", methods=["GET", "POST"])
 def index():
@@ -107,6 +85,7 @@ def index():
             pass
 
     return render_template("index.html", result=result)
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5000"))
